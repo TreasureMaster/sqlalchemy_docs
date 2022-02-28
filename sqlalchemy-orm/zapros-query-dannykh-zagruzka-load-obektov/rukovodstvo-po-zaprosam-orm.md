@@ -215,7 +215,96 @@ ORM поддерживает загрузку сущностей из опера
 >>> textual_sql = textual_sql.columns(User.id, User.name, User.fullname)
 ```
 
+Теперь у нас есть конструкция SQL, сконфигурированная с помощью ORM, которая, как указано, может загружать столбцы «**id**», «**name**» и «**fullname**» отдельно. Чтобы вместо этого использовать этот оператор **SELECT** в качестве источника полных сущностей **User**, мы можем связать эти столбцы с обычной конструкцией [Select](https://docs.sqlalchemy.org/en/14/core/selectable.html#sqlalchemy.sql.expression.Select) с поддержкой ORM, используя метод [Select.from\_statement()](https://docs.sqlalchemy.org/en/14/core/selectable.html#sqlalchemy.sql.expression.Select.from\_statement):
+
+```python
+>>> # использование from_statement()
+>>> orm_sql = select(User).from_statement(textual_sql)
+>>> for user_obj in session.execute(orm_sql).scalars():
+...     print(user_obj)
+```
+
+```sql
+SELECT id, name, fullname FROM user_account ORDER BY id
+[...] ()
+```
+
+```python
+User(id=1, name='spongebob', fullname='Spongebob Squarepants')
+User(id=2, name='sandy', fullname='Sandy Cheeks')
+User(id=3, name='patrick', fullname='Patrick Star')
+User(id=4, name='squidward', fullname='Squidward Tentacles')
+User(id=5, name='ehkrabs', fullname='Eugene H. Krabs')
+```
+
+Тот же объект [TextualSelect](https://docs.sqlalchemy.org/en/14/core/selectable.html#sqlalchemy.sql.expression.TextualSelect) также можно преобразовать в подзапрос с помощью метода [TextualSelect.subquery()](https://docs.sqlalchemy.org/en/14/core/selectable.html#sqlalchemy.sql.expression.TextualSelect.subquery) и связать с ним сущность **User** с помощью конструкции [aliased()](https://docs.sqlalchemy.org/en/14/orm/query.html#sqlalchemy.orm.aliased) аналогично описанному ниже в разделе [Выбор сущностей из подзапросов](rukovodstvo-po-zaprosam-orm.md#vybor-sushnostei-iz-podzaprosov):
+
+```python
+>>> # использование aliased() для выборки из подзапроса
+>>> orm_subquery = aliased(User, textual_sql.subquery())
+>>> stmt = select(orm_subquery)
+>>> for user_obj in session.execute(stmt).scalars():
+...     print(user_obj)
+```
+
+```sql
+SELECT anon_1.id, anon_1.name, anon_1.fullname
+FROM (SELECT id, name, fullname FROM user_account ORDER BY id) AS anon_1
+[...] ()
+```
+
+```python
+User(id=1, name='spongebob', fullname='Spongebob Squarepants')
+User(id=2, name='sandy', fullname='Sandy Cheeks')
+User(id=3, name='patrick', fullname='Patrick Star')
+User(id=4, name='squidward', fullname='Squidward Tentacles')
+User(id=5, name='ehkrabs', fullname='Eugene H. Krabs')
+```
+
+Разница между использованием [TextualSelect](https://docs.sqlalchemy.org/en/14/core/selectable.html#sqlalchemy.sql.expression.TextualSelect) непосредственно с [Select.from\_statement()](https://docs.sqlalchemy.org/en/14/core/selectable.html#sqlalchemy.sql.expression.Select.from\_statement) и использованием **aliased()** заключается в том, что в первом случае в результирующем SQL не создается подзапрос. В некоторых сценариях это может быть выгодно с точки зрения производительности или сложности.
+
+{% hint style="info" %}
+Смотри также:
+
+[Using INSERT, UPDATE and ON CONFLICT (i.e. upsert) to return ORM Objects](https://docs.sqlalchemy.org/en/14/orm/persistence\_techniques.html#orm-dml-returning-objects) - Метод [Select.from\_statement()](https://docs.sqlalchemy.org/en/14/core/selectable.html#sqlalchemy.sql.expression.Select.from\_statement) также работает с операторами [DML](https://docs.sqlalchemy.org/en/14/glossary.html#term-DML), поддерживающими **RETURNING**.
+{% endhint %}
+
 ## Выбор сущностей из подзапросов
+
+Конструкцию [aliased()](https://docs.sqlalchemy.org/en/14/orm/query.html#sqlalchemy.orm.aliased), обсуждавшуюся в предыдущем разделе, можно использовать с любой конструкцией **Subquery**, полученной из такого метода, как [Select.subquery()](https://docs.sqlalchemy.org/en/14/core/selectable.html#sqlalchemy.sql.expression.Select.subquery), чтобы связать объекты ORM со столбцами, возвращаемыми этим подзапросом; **должно существовать** отношение соответствия столбцов между столбцами, предоставленными подзапросом, и столбцами, на которые сопоставляется сущность, что означает, что подзапрос должен быть в конечном счете получен из этих сущностей, как в приведенном ниже примере:
+
+```python
+>>> inner_stmt = select(User).where(User.id < 7).order_by(User.id)
+>>> subq = inner_stmt.subquery()
+>>> aliased_user = aliased(User, subq)
+>>> stmt = select(aliased_user)
+>>> for user_obj in session.execute(stmt).scalars():
+...     print(user_obj)
+```
+
+```sql
+SELECT anon_1.id, anon_1.name, anon_1.fullname
+FROM (SELECT user_account.id AS id, user_account.name AS name, user_account.fullname AS fullname
+FROM user_account
+WHERE user_account.id < ? ORDER BY user_account.id) AS anon_1
+[generated in ...] (7,)
+```
+
+```python
+User(id=1, name='spongebob', fullname='Spongebob Squarepants')
+User(id=2, name='sandy', fullname='Sandy Cheeks')
+User(id=3, name='patrick', fullname='Patrick Star')
+User(id=4, name='squidward', fullname='Squidward Tentacles')
+User(id=5, name='ehkrabs', fullname='Eugene H. Krabs')
+```
+
+{% hint style="info" %}
+Смотри также:
+
+[Подзапросы/CTE сущностей ORM](../../sqlalchemy-2.0/uchebnik-po-sqlalchemy-1.4-2.0/rabota-s-dannymi/vybor-strok-s-pomoshyu-core-ili-orm.md#podzaprosy-cte-sushnostei-orm) - в документации [SQLAlchemy 1.4 / 2.0 Tutorial](https://docs.sqlalchemy.org/en/14/tutorial/index.html#unified-tutorial)
+
+[Joining to Subqueries](https://docs.sqlalchemy.org/en/14/orm/queryguide.html#orm-queryguide-join-subqueries)
+{% endhint %}
 
 ## Выбор сущностей из UNION и других операций набора
 
